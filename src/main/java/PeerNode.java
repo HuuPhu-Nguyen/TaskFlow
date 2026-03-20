@@ -19,7 +19,7 @@ public class PeerNode {
             BufferedReader in = new BufferedReader(new InputStreamReader(socket.getInputStream()));
 
             // String HTTPRequest = "GET " + resource + " HTTP/1.1\n" + "Host: " + host + "\n\n";
-            String HTTPRequest = "helloworld";
+            String HTTPRequest = "helloworld \n\n";
 
             out.writeBytes(HTTPRequest);
             String responseLine;
