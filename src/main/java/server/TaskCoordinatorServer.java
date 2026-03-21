@@ -1,89 +1,48 @@
 package server;
 
-import com.google.gson.Gson;
-import com.google.gson.JsonObject;
-import com.google.gson.JsonParseException;
-
-import java.io.BufferedReader;
-import java.io.DataOutputStream;
-import java.io.InputStreamReader;
+import java.io.IOException;
 import java.net.ServerSocket;
 import java.net.Socket;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 
 public class TaskCoordinatorServer {
+
     private static final int PORT = 6789;
-    private static final String DEFAULT_NODE_ID = "192.168.1.15";
-    private static final Gson GSON = new Gson();
+    private static final int THREAD_POOL_SIZE = 10;
 
-    public static void main(String[] argv) throws Exception {
-        String nodeId = argv.length > 0 ? argv[0] : DEFAULT_NODE_ID;
-        ServerSocket welcomeSocket = new ServerSocket(PORT);
+    public static void main(String[] args) {
 
-        System.out.println("Waiting for incoming connection Request...");
-        System.out.println("Server nodeId: " + nodeId);
-
-        while (true) {
-            Socket connectionSocket = welcomeSocket.accept();
-
-            try (
-                BufferedReader inFromClient = new BufferedReader(
-                    new InputStreamReader(connectionSocket.getInputStream()));
-                DataOutputStream outToClient = new DataOutputStream(connectionSocket.getOutputStream())
-            ) {
-                String pingMessage = createPingMessage(nodeId);
-                outToClient.writeBytes(pingMessage + "\n");
-                outToClient.flush();
-                System.out.println("SENT TO CLIENT: " + pingMessage);
-
-                String clientMessage = inFromClient.readLine();
-                if (clientMessage == null) {
-                    System.out.println("Client disconnected before replying.");
-                    continue;
+        ExecutorService pool = Executors.newFixedThreadPool(THREAD_POOL_SIZE);
+        Runtime.getRuntime().addShutdownHook(new Thread(() -> {
+            System.out.println("Shutting down server...");
+            pool.shutdown(); // Disable new tasks from being submitted
+            try {
+                // Wait up to 5 seconds for existing tasks to terminate
+                if (!pool.awaitTermination(5, java.util.concurrent.TimeUnit.SECONDS)) {
+                    System.out.println("Forcing shutdown now...");
+                    pool.shutdownNow(); // Cancel currently executing tasks
                 }
-
-                System.out.println("RECEIVED FROM CLIENT: " + clientMessage);
-                processPongMessage(clientMessage);
-            } finally {
-                connectionSocket.close();
+            } catch (InterruptedException e) {
+                pool.shutdownNow();
+                Thread.currentThread().interrupt();
             }
-        }
-    }
+            System.out.println("Server halted.");
+        }));
 
-    private static String createPingMessage(String nodeId) {
-        JsonObject ping = new JsonObject();
-        ping.addProperty("type", "PING");
-        ping.addProperty("nodeId", nodeId);
-        return GSON.toJson(ping);
-    }
+        System.out.println("Server starting on port " + PORT + "...");
 
-    private static void processPongMessage(String clientMessage) {
-        try {
-            JsonObject pong = GSON.fromJson(clientMessage, JsonObject.class);
-            if (pong == null) {
-                System.out.println("Received empty JSON payload.");
-                return;
+        try (ServerSocket serverSocket = new ServerSocket(PORT)) {
+
+            while (true) {
+                Socket socket = serverSocket.accept();
+                System.out.println("New peer connected: " + socket.getRemoteSocketAddress());
+
+                pool.submit(new PeerHandler(socket));
             }
 
-            String type = getStringField(pong, "type");
-            if (!"PONG".equalsIgnoreCase(type)) {
-                System.out.println("Unexpected message type: " + type);
-                return;
-            }
-
-            String time = getStringField(pong, "time");
-            System.out.println("Client replied with PONG at " + time);
-        } catch (JsonParseException | IllegalStateException e) {
-            System.out.println("Received invalid JSON from client.");
-        } catch (IllegalArgumentException e) {
-            System.out.println("Invalid PONG message: " + e.getMessage());
+        } catch (IOException e) {
+            System.err.println("Server error: " + e.getMessage());
         }
-    }
-
-    private static String getStringField(JsonObject json, String fieldName) {
-        if (!json.has(fieldName) || json.get(fieldName).isJsonNull()) {
-            throw new IllegalArgumentException("Missing field: " + fieldName);
-        }
-
-        return json.get(fieldName).getAsString();
     }
 }
