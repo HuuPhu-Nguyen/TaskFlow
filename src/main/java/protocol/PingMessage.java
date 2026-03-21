@@ -6,4 +6,7 @@ public class PingMessage extends Message {
         this.nodeId = nodeId;
         this.time = time;
     }
+    public PingMessage() {
+        this.type = MessageType.PING;
+    }
 }

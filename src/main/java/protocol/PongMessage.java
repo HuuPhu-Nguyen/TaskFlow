@@ -6,4 +6,7 @@ public class PongMessage extends Message {
         this.nodeId = nodeId;
         this.time = time;
     }
+    public PongMessage(){
+        this.type = MessageType.PONG;
+    }
 }
