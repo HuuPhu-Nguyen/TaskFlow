@@ -14,6 +14,6 @@ public class PongHandler implements MessageHandler {
         PongMessage pong = (PongMessage) message;
 
         System.out.println("Received PONG from " +
-                pong.getNodeId() + " at " + pong.getTime());
+                pong.getNodeId());
     }
 }

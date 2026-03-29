@@ -18,13 +18,10 @@ public class MessageFactory {
     public Message fromJson(String json) {
         JsonObject obj = JsonParser.parseString(json).getAsJsonObject();
         String type = obj.get("type").getAsString();
-
         Function<String, Message> parser = registry.get(type);
-
         if (parser == null) {
             throw new RuntimeException("Unknown message type: " + type);
         }
-
         return parser.apply(json);
     }
 }

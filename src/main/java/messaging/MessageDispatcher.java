@@ -16,7 +16,6 @@ public class MessageDispatcher {
 
     public void dispatch(Message message, PrintWriter out) {
         MessageHandler handler = handlers.get(message.getType());
-
         if (handler != null) {
             handler.handle(message, out);
         } else {
