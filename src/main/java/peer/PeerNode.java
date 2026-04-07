@@ -1,15 +1,21 @@
 package peer;
 
+import java.io.BufferedReader;
+import java.io.IOException;
+import java.io.InputStreamReader;
+import java.io.PrintWriter;
+import java.net.Socket;
+
 import com.google.gson.Gson;
+
 import messaging.MessageDispatcher;
 import messaging.MessageFactory;
+import messaging.handlers.ConversionHandler;
 import messaging.handlers.PingHandler;
 import protocol.Message;
 import protocol.MessageType;
 import protocol.PingMessage;
-
-import java.io.*;
-import java.net.*;
+import protocol.TaskAssignMessage;
 
 public class PeerNode {
 
@@ -63,12 +69,15 @@ public class PeerNode {
         MessageFactory factory = new MessageFactory();
         factory.register(MessageType.PING,
                 json -> gson.fromJson(json, PingMessage.class));
+        factory.register(MessageType.TASK_ASSIGN,
+                json -> gson.fromJson(json, TaskAssignMessage.class));
         return factory;
     }
 
     private static MessageDispatcher createDispatcher() {
         MessageDispatcher dispatcher = new MessageDispatcher();
         dispatcher.register(MessageType.PING, new PingHandler());
+        dispatcher.register(MessageType.TASK_ASSIGN, new ConversionHandler());
         return dispatcher;
     }
 }

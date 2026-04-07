@@ -1,19 +1,23 @@
 package server;
 
-import protocol.Message;
-import server.handler.PeerHandler;
-import server.model.MessageEnvelope;
-import server.monitor.PeerLivenessMonitor;
-import server.registry.InMemoryPeerRegistry;
-import server.registry.PeerRegistry;
-
 import java.io.IOException;
 import java.net.ServerSocket;
 import java.net.Socket;
+import java.nio.file.Paths;
 import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.LinkedBlockingQueue;
+
+import protocol.Message;
+import protocol.MessageType;
+import protocol.TaskResultMessage;
+import server.handler.PeerHandler;
+import server.model.MessageEnvelope;
+import server.monitor.PeerLivenessMonitor;
+import server.registry.InMemoryPeerRegistry;
+import server.registry.PeerInfo;
+import server.registry.PeerRegistry;
 
 public class TaskCoordinatorServer {
 
@@ -23,11 +27,21 @@ public class TaskCoordinatorServer {
 
     public static void main(String[] args) {
 
+        // Optional: java server.TaskCoordinatorServer <inputFolder> [targetFormat]
         BlockingQueue<MessageEnvelope> inboundMailbox = new LinkedBlockingQueue<>();
         PeerRegistry registry = new InMemoryPeerRegistry();
 
         ExecutorService ioPool = Executors.newFixedThreadPool(IO_POOL_SIZE);
         PeerLivenessMonitor monitor = new PeerLivenessMonitor(registry, HEARTBEAT_TIMEOUT_MILLIS);
+
+        final JobDispatcher jobDispatcher = (args.length >= 1)
+                ? new JobDispatcher(registry, Paths.get(args[0]), args.length >= 2 ? args[1] : "png")
+                : null;
+
+        if (jobDispatcher != null) {
+            System.out.printf("Image conversion job: %s → %s%n",
+                    args[0], (args.length >= 2 ? args[1] : "png").toUpperCase());
+        }
 
         Thread schedulerThread = new Thread(() -> {
             while (!Thread.currentThread().isInterrupted()) {
@@ -35,12 +49,21 @@ public class TaskCoordinatorServer {
                     MessageEnvelope envelope = inboundMailbox.take();
                     Message message = envelope.message();
                     String fromNodeId = envelope.fromNodeId();
-                    System.out.println("Scheduler handling " +
-                            message.getType() + " from " + fromNodeId);
-                    // future:
-                    // - TASK_SUBMIT -> split job into tasks
-                    // - WORK_REQUEST -> select task for peer
-                    // - TASK_RESULT -> update task/job state
+
+                    if (MessageType.TASK_RESULT.equals(message.getType())) {
+                        TaskResultMessage result = (TaskResultMessage) message;
+                        PeerInfo peer = registry.get(fromNodeId);
+                        if (peer != null) peer.decrementTasks();
+                        if (jobDispatcher != null) {
+                            jobDispatcher.onResult(
+                                    result.getTaskId(),
+                                    result.getStatus(),
+                                    result.getOutputPath(),
+                                    result.getError());
+                        }
+                    } else {
+                        System.out.println("Scheduler: unhandled " + message.getType() + " from " + fromNodeId);
+                    }
                 } catch (InterruptedException e) {
                     Thread.currentThread().interrupt();
                 } catch (Exception e) {
@@ -95,6 +118,12 @@ public class TaskCoordinatorServer {
         monitor.start();
         schedulerThread.start();
         statusPrinter.start();
+
+        if (jobDispatcher != null) {
+            Thread dispatchThread = new Thread(jobDispatcher, "job-dispatcher");
+            dispatchThread.setDaemon(true);
+            dispatchThread.start();
+        }
 
         try (ServerSocket serverSocket = new ServerSocket(PORT)) {
             System.out.println("TaskCoordinatorServer listening on port " + PORT);

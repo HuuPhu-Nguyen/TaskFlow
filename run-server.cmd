@@ -1,6 +1,17 @@
 @echo off
 setlocal enabledelayedexpansion
 
-set GSON_JAR=%USERPROFILE%\.m2\repository\com\google\code\gson\gson\2.10.1\gson-2.10.1.jar
+set INPUT_FOLDER=%1
+set TARGET_FORMAT=%2
 
-java -cp "target/classes;!GSON_JAR!" server.TaskCoordinatorServer
+if "!TARGET_FORMAT!"=="" set TARGET_FORMAT=png
+
+set FAT_JAR=target\distributed-task-system-1.0-SNAPSHOT-jar-with-dependencies.jar
+
+if "!INPUT_FOLDER!"=="" (
+    echo Starting coordinator (no job)
+    java -cp "!FAT_JAR!" server.TaskCoordinatorServer
+) else (
+    echo Starting coordinator with job: !INPUT_FOLDER! -^> !TARGET_FORMAT!
+    java -cp "!FAT_JAR!" server.TaskCoordinatorServer "!INPUT_FOLDER!" "!TARGET_FORMAT!"
+)
