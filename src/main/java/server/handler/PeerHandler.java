@@ -1,15 +1,5 @@
 package server.handler;
 
-import com.google.gson.Gson;
-import messaging.MessageFactory;
-import protocol.Message;
-import protocol.MessageType;
-import protocol.PingMessage;
-import protocol.PongMessage;
-import server.model.MessageEnvelope;
-import server.registry.PeerInfo;
-import server.registry.PeerRegistry;
-
 import java.io.BufferedReader;
 import java.io.IOException;
 import java.io.InputStreamReader;
@@ -19,6 +9,18 @@ import java.net.SocketException;
 import java.net.SocketTimeoutException;
 import java.time.Instant;
 import java.util.concurrent.BlockingQueue;
+
+import com.google.gson.Gson;
+
+import messaging.MessageFactory;
+import protocol.Message;
+import protocol.MessageType;
+import protocol.PingMessage;
+import protocol.PongMessage;
+import protocol.TaskResultMessage;
+import server.model.MessageEnvelope;
+import server.registry.PeerInfo;
+import server.registry.PeerRegistry;
 
 public class PeerHandler implements Runnable {
 
@@ -132,6 +134,8 @@ public class PeerHandler implements Runnable {
 
         factory.register(MessageType.PONG,
                 json -> gson.fromJson(json, PongMessage.class));
+        factory.register(MessageType.TASK_RESULT,
+                json -> gson.fromJson(json, TaskResultMessage.class));
 
         return factory;
     }
