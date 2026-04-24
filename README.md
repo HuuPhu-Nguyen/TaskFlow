@@ -1,144 +1,281 @@
 # TaskFlow
 
-A distributed task processing system built on raw Java TCP sockets and JSON messaging. A central coordinator server distributes work across any number of connected peer nodes, which process tasks in parallel and report results back.
+TaskFlow is a distributed task processing system built on raw Java TCP sockets and JSON messaging.  
+A central coordinator distributes work across connected peers, which execute tasks in parallel and return results asynchronously.
 
-## Architecture
+The system demonstrates key distributed systems concepts such as scheduling, load balancing, fault tolerance, and asynchronous communication.
 
-```
-┌─────────────────────────────────────┐
-│        TaskCoordinatorServer         │
-│                                     │
-│  ┌─────────────┐  ┌───────────────┐ │
-│  │ JobDispatcher│  │task-scheduler │ │
-│  │ (sends tasks)│  │(handles results│ │
-│  └──────┬──────┘  └───────┬───────┘ │
-│         │                 │         │
-│  ┌──────▼─────────────────▼───────┐ │
-│  │   PeerHandler (one per peer)   │ │
-│  │   - sends PING heartbeats      │ │
-│  │   - forwards messages to mailbox│ │
-│  └────────────────────────────────┘ │
-└──────────────┬──────────────────────┘
-               │ TCP (port 6789)
-    ┌──────────┴──────────┐
-    │                     │
-┌───▼────┐          ┌─────▼───┐
-│PeerNode│          │PeerNode │   ...
-│        │          │         │
-│PING→PONG          │PING→PONG│
-│TASK_ASSIGN        │TASK_ASSIGN
-│→ convert          │→ convert│
-│TASK_RESULT        │TASK_RESULT
-└────────┘          └─────────┘
-```
+---
 
-### Message Flow
+## Overview
 
-1. **Server** scans the input folder for files to process
-2. **Server** waits until at least one peer connects
-3. **Server → Peer**: `TASK_ASSIGN` — contains input path, output path, target format
-4. **Peer** processes the file (e.g. converts PDF → PNG) and writes output
-5. **Peer → Server**: `TASK_RESULT` — reports `OK` or `ERROR`
-6. **Server** logs progress and picks the next least-loaded peer for the next task
-7. **Server → Peer**: `PING` heartbeat every 3 seconds; peer replies with `PONG`
-8. Peers that miss heartbeats for 10 seconds are evicted from the registry
+TaskFlow follows a **coordinator–worker model**:
 
-## Supported Tasks
+- A **Coordinator Server** manages jobs and connected peers
+- **Peer nodes** execute tasks concurrently
+- A **GUI client** submits jobs and receives results
 
-Currently implemented: **image format conversion**, including PDF-to-image rendering.
+Jobs are submitted dynamically by clients and processed in a fully asynchronous, message-driven pipeline.
 
-| Input formats | Output formats |
-|---|---|
-| PDF, PNG, JPG/JPEG, BMP, GIF | PNG, JPG, BMP, GIF |
+---
 
-PDF pages are rendered at 150 DPI. Multi-page PDFs produce one output file per page (e.g. `test-page-0.png`, `test-page-1.png`, …).
+## Core Components
 
-## Project Structure
+### Coordinator Server
 
-```
-src/main/java/
-├── server/
-│   ├── TaskCoordinatorServer.java   # Main server — accepts peers, runs scheduler
-│   ├── JobDispatcher.java           # Scans input folder, distributes tasks to peers
-│   └── handler/
-│       └── PeerHandler.java         # Per-peer thread — heartbeat + message routing
-│   └── monitor/
-│       └── PeerLivenessMonitor.java # Evicts unresponsive peers
-│   └── registry/
-│       ├── PeerRegistry.java        # Interface for peer tracking
-│       ├── InMemoryPeerRegistry.java
-│       └── PeerInfo.java            # Tracks socket, heartbeat time, active task count
-│   └── model/
-│       └── MessageEnvelope.java     # Wraps a message with its sender's node ID
-├── peer/
-│   └── PeerNode.java                # Connects to server, dispatches incoming messages
-├── messaging/
-│   ├── MessageDispatcher.java       # Routes messages to the right handler by type
-│   ├── MessageFactory.java          # Deserializes JSON to typed Message objects
-│   ├── MessageHandler.java          # Handler interface
-│   └── handlers/
-│       ├── PingHandler.java         # Responds to PING with PONG
-│       ├── PongHandler.java         # Logs received PONGs
-│       └── ConversionHandler.java   # Converts images/PDFs using ImageIO + PDFBox
-└── protocol/
-    ├── Message.java                 # Abstract base — type, nodeId, time
-    ├── MessageType.java             # Constants: PING, PONG, TASK_ASSIGN, TASK_RESULT
-    ├── PingMessage.java
-    ├── PongMessage.java
-    ├── TaskAssignMessage.java       # taskId, inputPath, outputPath, targetFormat
-    └── TaskResultMessage.java       # taskId, status, outputPath, error
-```
+The coordinator is the central entry point of the system.
 
-## Prerequisites
+- Listens for peer connections on port `6789`
+- Maintains a registry of connected peers
+- Handles networking via `PeerHandler`
+- Delegates all scheduling logic to a dedicated `TaskScheduler` thread
 
-- Java 21+
-- Maven 3.9+ (or use the included `apache-maven-3.9.14/` directory)
+The system uses a mailbox-based design where incoming messages are queued and processed asynchronously.
 
-## Build
+---
 
-Run from the `TaskFlow/` directory:
+### Task Scheduler
 
-```cmd
-mvn package -q
-```
+The `TaskScheduler` is the core of the system.
 
-This produces `target/distributed-task-system-1.0-SNAPSHOT-jar-with-dependencies.jar` — a fat jar containing all dependencies (Gson, PDFBox).
+**Responsibilities:**
+- Handles incoming messages (`JOB_SUBMIT`, `TASK_RESULT`)
+- Creates jobs and splits them into tasks
+- Dispatches tasks to available peers
+- Tracks task progress and retries failed work
+- Aggregates results and returns them to the requester
 
-## Running
+**Load Balancing**
+- Maximum of **3 concurrent tasks per peer**
+- Peers are selected based on a scoring function (load + performance)
 
-### Start the server
+**Fault Tolerance**
+- Task timeout: **60 seconds**
+- Automatic retries on failure
+- High-retry tasks (≥10) are broadcast to all available peers
 
-```cmd
-.\run-server.cmd "<input-folder>" [target-format]
-```
+---
 
-- `<input-folder>` — folder containing files to convert (scanned one level deep)
-- `target-format` — output format, default `png`
+### Peer Node
 
-**Example** — convert all PDFs/images in a folder to PNG:
-```cmd
-.\run-server.cmd "src\main\java" png
-```
+A `PeerNode` connects to the coordinator and executes assigned tasks.
 
-Output files are written to `<input-folder>\converted\`.
+**Responsibilities:**
+- Maintain TCP connection with the server
+- Respond to heartbeat messages (`PING` / `PONG`)
+- Receive `TASK_ASSIGN` messages
+- Execute tasks using the execution engine
+- Send results back via `TASK_RESULT`
 
-### Start a peer (in a separate terminal)
+---
 
-```cmd
-.\run-peer.cmd [host] [port]
-```
+### Execution Engine
 
-Defaults: `localhost 6789`
+Each peer runs a `PeerExecutionEngine`.
 
-```cmd
-.\run-peer.cmd
-```
+- Uses a thread pool sized to available CPU cores
+- Executes tasks asynchronously
+- Supports pluggable processors for different task types
 
-Start multiple peers in multiple terminals to process files in parallel. The server automatically load-balances across all connected peers using least-active-tasks assignment.
+New task types can be added without modifying the core system.
+
+---
+
+### Job Model
+
+TaskFlow uses a generic abstraction for distributed jobs.
+
+#### EmbarrassinglyParallelJob
+- Splits work into independent tasks
+- Tracks completion safely (idempotent updates)
+- Aggregates final results
+
+#### TaskUnit
+Each task tracks:
+- Status (`PENDING`, `ASSIGNED`, `COMPLETED`, `FAILED`)
+- Assigned peer
+- Retry count
+- Execution timing
+
+---
+
+## Supported Job: Image Conversion
+
+Currently implemented job type:
+IMAGE_CONVERSION
+
+
+**Features:**
+- Converts between PNG, JPG, BMP, GIF
+- Supports PDF → image conversion
+- Uses Apache PDFBox for PDF rendering
+- Transfers files as Base64-encoded payloads
+
+Each file is processed independently, allowing full parallel execution across peers.
+
+---
+
+## Message Protocol
+
+All communication is done using JSON messages over TCP.
+
+### Message Types
+
+- `JOB_SUBMIT` — submit a new job
+- `TASK_ASSIGN` — assign a task to a peer
+- `TASK_RESULT` — return result from peer
+- `JOB_RESULT` — final aggregated result
+- `PING` — heartbeat from server
+- `PONG` — heartbeat response from peer
+
+---
+
+## Workflow
+
+1. GUI uploads files and encodes them in Base64
+2. A `JOB_SUBMIT` message is sent to the coordinator
+3. The scheduler creates a job and splits it into tasks
+4. Tasks are distributed to peers (`TASK_ASSIGN`)
+5. Peers execute tasks and return results (`TASK_RESULT`)
+6. The scheduler aggregates results
+7. The coordinator sends a `JOB_RESULT` back to the client
+8. The GUI allows the user to save output files
+
+---
+
+## GUI Client
+
+The JavaFX GUI (`PeerApp`) acts as both:
+
+- a **job client** (submits work)
+- a **worker peer** (executes tasks)
+
+**Features:**
+- Upload files
+- Select output format
+- Submit distributed jobs
+- Receive and save results
+- Uses temporary session folders for input/output
+
+---
+
+## Key Design Features
+
+### Asynchronous Message-Driven System
+- Decoupled components via message passing
+- No blocking request-response model
+
+### Fault Tolerance
+- Task retries
+- Timeout detection
+- Peer failure handling
+
+### Load Balancing
+- Dynamic scheduling
+- Peer scoring and task limits
+
+### Extensibility
+- New job types via factory pattern
+- New processors via `TaskProcessor` interface
+
+---
 
 ## Dependencies
 
-| Library | Version | Use |
-|---|---|---|
-| [Gson](https://github.com/google/gson) | 2.10.1 | JSON serialization of messages |
-| [Apache PDFBox](https://pdfbox.apache.org/) | 3.0.4 | PDF rendering to BufferedImage |
+- Gson — JSON serialization
+- Apache PDFBox — PDF rendering
+- JavaFX — GUI
+
+---
+
+## Future Improvements
+
+- Persistent job tracking (database)
+- Distributed coordinator (no single point of failure)
+- More task types
+- Monitoring and metrics dashboard
+
+---
+
+## Notes
+
+This project is designed to demonstrate practical distributed systems concepts, including:
+
+- task orchestration
+- concurrency control
+- fault tolerance
+- network-based computation  
+
+## How to Run
+
+### Prerequisites
+
+Make sure you have the following installed:
+
+- **Java 21 or higher**
+- **Maven 3.9+**
+
+Check installation:
+
+```bash
+java -version
+mvn -version
+```
+
+---
+
+### 1. Clone the Repository
+
+```bash
+git clone <your-repo-url>
+cd TaskFlow
+```
+
+---
+
+### 2. Build the Project
+
+```bash
+mvn clean package
+```
+
+---
+
+### 3. Start the Coordinator Server
+
+In one terminal:
+
+```bash
+mvn exec:java -Dexec.mainClass="server.TaskCoordinatorServer"
+```
+
+---
+
+### 4. Start the GUI
+
+In another terminal:
+
+```bash
+mvn javafx:run
+```
+
+---
+Inside the GUI:
+
+1. Enter:
+   - Host:
+   - Port:
+2. Click **Connect**
+3. Upload files
+4. Choose output format
+5. Click **Start Conversion**
+6. Select a folder to save results
+
+---
+---
+
+### Notes
+
+- The GUI also acts as a peer and can execute tasks.
+- Always start the server before peers or GUI.
+- If connection fails, verify port `6789` is available.

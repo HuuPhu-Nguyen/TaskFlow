@@ -13,6 +13,8 @@ public abstract class Message {
     @SerializedName("time")
     String time;
 
+
+
     public String getNodeId() {
         return nodeId;
     }

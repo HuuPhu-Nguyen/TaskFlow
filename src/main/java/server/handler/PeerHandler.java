@@ -24,7 +24,7 @@ import server.registry.PeerRegistry;
 
 public class PeerHandler implements Runnable {
 
-    private static final long HEARTBEAT_INTERVAL_MILLIS = 3_000;
+    private static final long HEARTBEAT_INTERVAL_MILLIS = 30_000;
     private static final int SOCKET_POLL_TIMEOUT_MILLIS = 1_000;
 
     private final Socket socket;
@@ -59,20 +59,25 @@ public class PeerHandler implements Runnable {
                 PrintWriter out = new PrintWriter(socket.getOutputStream(), true);
                 BufferedReader in = new BufferedReader(new InputStreamReader(socket.getInputStream()))
         ) {
+            PeerInfo peerInfo = registry.get(nodeId);
+            if (peerInfo != null) {
+                peerInfo.attachSender(msg -> {
+                    synchronized (out) {
+                        out.println(gson.toJson(msg));
+                    }
+                });
+            }
             System.out.println("Handling peer: " + nodeId);
-
             long nextHeartbeatAt = 0L;
-
+            long lastPingSentAt = 0L;
             while (!socket.isClosed()) {
                 long now = System.currentTimeMillis();
-
                 if (now >= nextHeartbeatAt) {
-                    PingMessage ping = new PingMessage(
-                            nodeId,
-                            Instant.now().toString()
-                    );
-
-                    out.println(gson.toJson(ping));
+                    PingMessage ping = new PingMessage(nodeId, Instant.now().toString());
+                    synchronized (out) {
+                        out.println(gson.toJson(ping));
+                        lastPingSentAt = System.currentTimeMillis();
+                    }
                     nextHeartbeatAt = now + HEARTBEAT_INTERVAL_MILLIS;
                 }
 
@@ -91,7 +96,13 @@ public class PeerHandler implements Runnable {
                     Message message = factory.fromJson(incomingJson);
 
                     if (message instanceof PongMessage) {
+                        long rtt = System.currentTimeMillis() - lastPingSentAt;
                         registry.updateHeartbeat(nodeId);
+                        // UPDATE PEER INFO
+                        PeerInfo info = registry.get(nodeId);
+                        if (info != null) {
+                            info.updateLatency(rtt);
+                        }
                         continue;
                     }
 
@@ -134,8 +145,12 @@ public class PeerHandler implements Runnable {
 
         factory.register(MessageType.PONG,
                 json -> gson.fromJson(json, PongMessage.class));
+
         factory.register(MessageType.TASK_RESULT,
                 json -> gson.fromJson(json, TaskResultMessage.class));
+
+        factory.register(protocol.MessageType.JOB_SUBMIT,
+                json -> gson.fromJson(json, protocol.JobSubmitMessage.class));
 
         return factory;
     }

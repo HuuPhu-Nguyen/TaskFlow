@@ -1,26 +1,51 @@
 package protocol;
 
+import java.util.List;
+
 public class TaskResultMessage extends Message {
 
     private String taskId;
-    private String status;
-    private String outputPath;
-    private String error;
+    private String jobId;
+    private Object resultPayload;
+    private boolean successful;
+    private String errorMessage;
 
-    public TaskResultMessage(String taskId, String status, String outputPath, String error) {
+    public TaskResultMessage(String nodeId, String time,
+                             String taskId, String jobId,
+                             Object resultPayload,
+                             boolean successful,
+                             String errorMessage) {
         this.type = MessageType.TASK_RESULT;
+        this.nodeId = nodeId;
+        this.time = time;
         this.taskId = taskId;
-        this.status = status;
-        this.outputPath = outputPath;
-        this.error = error;
+        this.jobId = jobId;
+        this.resultPayload = resultPayload;
+        this.successful = successful;
+        this.errorMessage = errorMessage;
     }
 
     public TaskResultMessage() {
         this.type = MessageType.TASK_RESULT;
     }
 
-    public String getTaskId()    { return taskId; }
-    public String getStatus()    { return status; }
-    public String getOutputPath(){ return outputPath; }
-    public String getError()     { return error; }
+    public String getTaskId() {
+        return taskId;
+    }
+
+    public String getJobId() {
+        return jobId;
+    }
+
+    public Object getResultPayload() {
+        return resultPayload;
+    }
+
+    public boolean isSuccessful() {
+        return successful;
+    }
+
+    public String getErrorMessage() {
+        return errorMessage;
+    }
 }

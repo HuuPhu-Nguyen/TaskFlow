@@ -3,24 +3,44 @@ package protocol;
 public class TaskAssignMessage extends Message {
 
     private String taskId;
-    private String inputPath;
-    private String outputPath;
-    private String targetFormat;
+    private String jobId;
+    private String taskType;
+    private Object payload;
+    private String param;
 
-    public TaskAssignMessage(String taskId, String inputPath, String outputPath, String targetFormat) {
+    public TaskAssignMessage(String nodeId, String time,
+                             String taskId, String jobId,
+                             String taskType, Object payload, String param) {
         this.type = MessageType.TASK_ASSIGN;
+        this.nodeId = nodeId;
+        this.time = time;
         this.taskId = taskId;
-        this.inputPath = inputPath;
-        this.outputPath = outputPath;
-        this.targetFormat = targetFormat;
+        this.jobId = jobId;
+        this.taskType = taskType;
+        this.payload = payload;
+        this.param = param;
     }
 
     public TaskAssignMessage() {
         this.type = MessageType.TASK_ASSIGN;
     }
 
-    public String getTaskId()      { return taskId; }
-    public String getInputPath()   { return inputPath; }
-    public String getOutputPath()  { return outputPath; }
-    public String getTargetFormat(){ return targetFormat; }
+    public String getTaskId() {
+        return taskId;
+    }
+
+    public String getJobId() {
+        return jobId;
+    }
+
+    public String getTaskType() {
+        return taskType;
+    }
+
+    public Object getPayload() {
+        return payload;
+    }
+    public String getParam() {
+        return param;
+    }
 }

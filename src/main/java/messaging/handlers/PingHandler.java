@@ -21,7 +21,9 @@ public class PingHandler implements MessageHandler {
                 ping.getNodeId(),
                 Instant.now().toString()
         );
-        out.println(gson.toJson(response));
+        synchronized (out) {
+            out.println(gson.toJson(response));
+        }
         System.out.println("Handled PING → sent PONG");
     }
 }
