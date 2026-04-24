@@ -1,4 +1,4 @@
-package GUI;
+package gui;
 
 import com.google.gson.Gson;
 import javafx.application.Application;
@@ -72,8 +72,16 @@ public class PeerApp extends Application {
         Button connectBtn = new Button("Connect to Coordinator");
 
         connectBtn.setOnAction(e -> {
-            startNetworkThread(hostField.getText(), Integer.parseInt(portField.getText()));
-            showMainGallery();
+            connectBtn.setDisable(true);
+            startNetworkThread(
+                    hostField.getText(),
+                    Integer.parseInt(portField.getText()),
+                    () -> Platform.runLater(this::showMainGallery),
+                    error -> Platform.runLater(() -> {
+                        connectBtn.setDisable(false);
+                        new Alert(Alert.AlertType.ERROR,
+                                "Could not connect to coordinator: " + error).show();
+                    }));
         });
 
         root.getChildren().addAll(new Label("Host:"), hostField, new Label("Port:"), portField, connectBtn);
@@ -108,6 +116,12 @@ public class PeerApp extends Application {
         // UPLOAD: Copy selected files to the local session 'in' folder
         startBtn.setOnAction(e -> {
             try {
+                if (socketOut == null) {
+                    new Alert(Alert.AlertType.ERROR,
+                            "Not connected to the coordinator yet.").show();
+                    return;
+                }
+
                 File folder = new File(currentInPath);
                 File[] files = folder.listFiles();
                 if (files == null || files.length == 0) return;
@@ -183,7 +197,7 @@ public class PeerApp extends Application {
         }
     }
 
-    private void startNetworkThread(String host, int port) {
+    private void startNetworkThread(String host, int port, Runnable onConnected, java.util.function.Consumer<String> onFailed) {
         backendNode = new PeerNode();
         Thread netThread = new Thread(() -> {
             try (Socket socket = new Socket(host, port)) {
@@ -192,6 +206,7 @@ public class PeerApp extends Application {
 
                 MessageFactory factory = createFactory();
                 MessageDispatcher dispatcher = createDispatcher(engine, socketOut);
+                onConnected.run();
 
                 String line;
                 while ((line = in.readLine()) != null) {
@@ -200,6 +215,8 @@ public class PeerApp extends Application {
                     dispatcher.dispatch(msg, socketOut);
                 }
             } catch (IOException e) {
+                socketOut = null;
+                onFailed.accept(e.getMessage());
                 Platform.runLater(() -> System.err.println("Connection lost: " + e.getMessage()));
             }
         });

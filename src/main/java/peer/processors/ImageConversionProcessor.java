@@ -52,7 +52,12 @@ public class ImageConversionProcessor implements TaskProcessor<FilePayload> {
         }
 
         ByteArrayOutputStream baos = new ByteArrayOutputStream();
-        ImageIO.write(img, format, baos);
+        if (!ImageIO.write(img, format, baos)) {
+            throw new IOException("No ImageIO writer found for target format: " + format);
+        }
+        if (baos.size() == 0) {
+            throw new IOException("Conversion produced no output for " + input.fileName());
+        }
 
         String outBase64 = Base64.getEncoder().encodeToString(baos.toByteArray());
         String newFileName = stripExtension(input.fileName()) + "." + format;
