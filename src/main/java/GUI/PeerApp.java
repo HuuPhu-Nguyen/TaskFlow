@@ -15,6 +15,7 @@ import messaging.MessageFactory;
 import peer.PeerNode;
 import peer.engine.PeerExecutionEngine;
 import peer.processors.ImageConversionProcessor;
+import peer.processors.VideoTranscodingProcessor;
 import protocol.*;
 
 import java.io.*;
@@ -52,6 +53,7 @@ public class PeerApp extends Application {
             // Initialize Engine with the same unique ID
             engine = new PeerExecutionEngine(sessionId);
             engine.registerProcessor("IMAGE_CONVERSION", new ImageConversionProcessor());
+            engine.registerProcessor("VIDEO_TRANSCODING", new VideoTranscodingProcessor());
         } catch (IOException e) {
             e.printStackTrace();
         }
@@ -95,13 +97,33 @@ public class PeerApp extends Application {
         root.setPadding(new Insets(10));
 
         HBox topBar = new HBox(10);
+        
+        // Job type selector
+        ComboBox<String> jobTypeBox = new ComboBox<>();
+        jobTypeBox.getItems().addAll("Image Conversion", "Video Transcoding");
+        jobTypeBox.setValue("Image Conversion");
+        
+        // Format selector (changes based on job type)
         ComboBox<String> formatBox = new ComboBox<>();
         formatBox.getItems().addAll("PNG", "JPG", "BMP", "GIF");
         formatBox.setValue("PNG");
 
         Button uploadBtn = new Button("Upload Files");
         Button startBtn = new Button("Start Conversion");
-        topBar.getChildren().addAll(new Label("Target:"), formatBox, uploadBtn, startBtn);
+        topBar.getChildren().addAll(new Label("Job Type:"), jobTypeBox, new Label("Target:"), formatBox, uploadBtn, startBtn);
+
+        // Update format options when job type changes
+        jobTypeBox.setOnAction(e -> {
+            String jobType = jobTypeBox.getValue();
+            formatBox.getItems().clear();
+            if ("Image Conversion".equals(jobType)) {
+                formatBox.getItems().addAll("PNG", "JPG", "BMP", "GIF");
+                formatBox.setValue("PNG");
+            } else {
+                formatBox.getItems().addAll("MP4", "AVI", "MKV", "MOV", "WEBM");
+                formatBox.setValue("MP4");
+            }
+        });
 
         gallery = new TilePane();
         gallery.setHgap(10);
@@ -124,7 +146,10 @@ public class PeerApp extends Application {
 
                 File folder = new File(currentInPath);
                 File[] files = folder.listFiles();
-                if (files == null || files.length == 0) return;
+                if (files == null || files.length == 0) {
+                    new Alert(Alert.AlertType.WARNING, "No files to process. Upload files first.").show();
+                    return;
+                }
 
                 List<FilePayload> payloads = new ArrayList<>();
                 for (File f : files) {
@@ -132,12 +157,19 @@ public class PeerApp extends Application {
                     payloads.add(new FilePayload(f.getName(), Base64.getEncoder().encodeToString(bytes)));
                 }
 
+                String jobType = jobTypeBox.getValue();
                 String targetFormat = formatBox.getValue().toLowerCase();
-                String jobId = backendNode.submitImageJob(payloads, targetFormat, socketOut);
+                String jobId;
+
+                if ("Image Conversion".equals(jobType)) {
+                    jobId = backendNode.submitImageJob(payloads, targetFormat, socketOut);
+                } else {
+                    jobId = backendNode.submitVideoJob(payloads, targetFormat, socketOut);
+                }
 
                 if (jobId != null) {
                     myActiveJobIds.add(jobId);
-                    System.out.println("GUI: Job submitted via PeerNode. ID: " + jobId);
+                    System.out.println("GUI: Job submitted via PeerNode. ID: " + jobId + " Type: " + jobType);
 
                     // --- THE WIPE LOGIC ---
 
@@ -152,16 +184,30 @@ public class PeerApp extends Application {
                     }
 
                     // Optional: Give the user feedback that conversion has started
-                    new Alert(Alert.AlertType.CONFIRMATION, "Conversion Started! The gallery will be cleared.").show();
+                    new Alert(Alert.AlertType.CONFIRMATION, jobType + " Started! The gallery will be cleared.").show();
                 }
             } catch (Exception ex) {
                 ex.printStackTrace();
+                new Alert(Alert.AlertType.ERROR, "Error: " + ex.getMessage()).show();
             }
         });
 
         uploadBtn.setOnAction(e -> {
             FileChooser fileChooser = new FileChooser();
-            fileChooser.setTitle("Select Images or PDFs");
+            String jobType = jobTypeBox.getValue();
+            
+            if ("Image Conversion".equals(jobType)) {
+                fileChooser.setTitle("Select Images or PDFs");
+                fileChooser.getExtensionFilters().addAll(
+                    new FileChooser.ExtensionFilter("Images", "*.png", "*.jpg", "*.jpeg", "*.bmp", "*.gif", "*.pdf")
+                );
+            } else {
+                fileChooser.setTitle("Select Videos");
+                fileChooser.getExtensionFilters().addAll(
+                    new FileChooser.ExtensionFilter("Videos", "*.mp4", "*.avi", "*.mkv", "*.mov", "*.webm", "*.flv", "*.wmv")
+                );
+            }
+            
             List<File> selectedFiles = fileChooser.showOpenMultipleDialog(window);
 
             if (selectedFiles != null) {

@@ -52,7 +52,7 @@ The `TaskScheduler` is the core of the system.
 **Fault Tolerance**
 - Task timeout: **60 seconds**
 - Automatic retries on failure
-- High-retry tasks (≥10) are broadcast to all available peers
+- Failed tasks are returned to the pending queue and retried by available peers
 
 ---
 
@@ -99,16 +99,23 @@ Each task tracks:
 
 ---
 
-## Supported Job: Image Conversion
+## Supported Jobs
 
-Currently implemented job type:
+Currently implemented job types:
 IMAGE_CONVERSION
+VIDEO_TRANSCODING
 
 
-**Features:**
+**Image conversion features:**
 - Converts between PNG, JPG, BMP, GIF
-- Supports PDF → image conversion
+- Supports PDF to image conversion
 - Uses Apache PDFBox for PDF rendering
+- Transfers files as Base64-encoded payloads
+
+**Video transcoding features:**
+- Converts between MP4, AVI, MKV, MOV, WEBM, FLV, WMV
+- Uses JavaCV with bundled FFmpeg native libraries
+- Uses broadly available FFmpeg encoders for portability across machines
 - Transfers files as Base64-encoded payloads
 
 Each file is processed independently, allowing full parallel execution across peers.
@@ -185,6 +192,7 @@ The JavaFX GUI (`PeerApp`) acts as both:
 - Gson — JSON serialization
 - Apache PDFBox — PDF rendering
 - JavaFX — GUI
+- JavaCV / FFmpeg — video transcoding
 
 ---
 
@@ -207,6 +215,18 @@ This project is designed to demonstrate practical distributed systems concepts, 
 - network-based computation  
 
 ## How to Run
+
+### Will this run on any computer?
+
+It should run on a normal Windows, macOS, or Linux desktop/laptop if all of these are true:
+
+- Java 21 or newer is installed.
+- Maven 3.9 or newer is installed.
+- The machine can download Maven dependencies the first time it builds.
+- The GUI machine has a desktop environment available. Headless servers can run the coordinator or command-line peer, but not the JavaFX GUI.
+- Port `6789` is open between the coordinator and peer machines.
+
+For multiple computers, start the coordinator on one machine. On every GUI or peer machine, connect to the coordinator machine's IP address instead of `localhost`.
 
 ### Prerequisites
 
@@ -265,8 +285,8 @@ mvn javafx:run
 Inside the GUI:
 
 1. Enter:
-   - Host:
-   - Port:
+   - Host: `localhost` if the coordinator is on the same computer, otherwise the coordinator computer's IP address
+   - Port: `6789`
 2. Click **Connect**
 3. Upload files
 4. Choose output format
@@ -274,10 +294,20 @@ Inside the GUI:
 6. Select a folder to save results
 
 ---
----
+
+### Optional: Start a Command-Line Worker Peer
+
+The GUI also works as a peer, so this is optional. Use this when you want another machine or terminal to contribute worker capacity without opening the GUI:
+
+```bash
+mvn exec:java -Dexec.mainClass=peer.PeerNode -Dexec.args="localhost 6789"
+```
+
+Replace `localhost` with the coordinator machine's IP address when running across computers.
 
 ### Notes
 
 - The GUI also acts as a peer and can execute tasks.
 - Always start the server before peers or GUI.
 - If connection fails, verify port `6789` is available.
+- If video conversion fails on one machine but not another, rebuild and restart every coordinator/peer process so all machines use the same compiled code.

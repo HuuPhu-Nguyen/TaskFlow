@@ -17,6 +17,7 @@ import messaging.MessageFactory;
 import messaging.handlers.PingHandler;
 import peer.engine.PeerExecutionEngine;
 import peer.processors.ImageConversionProcessor;
+import peer.processors.VideoTranscodingProcessor;
 import protocol.*;
 
 public class PeerNode {
@@ -37,6 +38,7 @@ public class PeerNode {
 
         //Register specialized processors
         engine.registerProcessor("IMAGE_CONVERSION", new ImageConversionProcessor());
+        engine.registerProcessor("VIDEO_TRANSCODING", new VideoTranscodingProcessor());
 
         MessageFactory factory = createFactory(gson);
 
@@ -85,6 +87,31 @@ public class PeerNode {
                 java.time.Instant.now().toString(),
                 jobId,
                 "IMAGE_CONVERSION",
+                new ArrayList<>(payloads),
+                format
+        );
+        // Serialize to JSON and Send via the PrintWriter
+        // Synchronize to prevent multiple threads from overlapping text lines
+        synchronized (out) {
+            String jsonMessage = new Gson().toJson(msg);
+            out.println(jsonMessage);
+            // No need for out.flush() here because auto-flush is true
+        }
+        return jobId;
+    }
+
+    public String submitVideoJob(List<FilePayload> payloads, String format, PrintWriter out) {
+        //Generate the unique ID
+        String jobId = "JOB_" + System.currentTimeMillis() + "_" + UUID.randomUUID().toString().substring(0, 8);
+
+        myActiveJobIds.add(jobId);
+
+        //Construct the Message Object
+        JobSubmitMessage msg = new JobSubmitMessage(
+                "CLIENT",
+                java.time.Instant.now().toString(),
+                jobId,
+                "VIDEO_TRANSCODING",
                 new ArrayList<>(payloads),
                 format
         );

@@ -2,6 +2,7 @@ package server.job;
 
 import protocol.JobSubmitMessage;
 import server.concreteJobs.conversion.ImageConversionJob;
+import server.concreteJobs.conversion.VideoTranscodingJob;
 
 /**
  * The JobFactory is the central point for creating concrete job objects.
@@ -16,6 +17,14 @@ public class JobFactory {
         if ("IMAGE_CONVERSION".equalsIgnoreCase(type)) {
             // msg.getParameters() holds the targetFormat (e.g., "PNG")
             return new ImageConversionJob(
+                    msg.getJobId(),
+                    requesterId,
+                    msg.getParameter()
+            );
+        }
+
+        if ("VIDEO_TRANSCODING".equalsIgnoreCase(type)) {
+            return new VideoTranscodingJob(
                     msg.getJobId(),
                     requesterId,
                     msg.getParameter()

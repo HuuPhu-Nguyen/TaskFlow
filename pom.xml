@@ -43,6 +43,13 @@
             <version>21</version>
         </dependency>
 
+        <!-- JavaCV for video transcoding (bundles FFmpeg native libs) -->
+        <dependency>
+            <groupId>org.bytedeco</groupId>
+            <artifactId>javacv-platform</artifactId>
+            <version>1.5.10</version>
+        </dependency>
+
     </dependencies>
 
     <build>

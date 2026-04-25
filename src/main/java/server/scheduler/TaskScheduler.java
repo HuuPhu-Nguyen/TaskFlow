@@ -83,8 +83,14 @@ public class TaskScheduler implements Runnable {
                 //Scheduler handles the Timing/Metrics (Agnostic of Data Types)
                 if(!result.isSuccessful()){
                     System.err.println("Peer reported failure: " + result.getErrorMessage());
+                    if (task == null || task.getStatus() == TaskUnit.TaskStatus.COMPLETED) {
+                        return;
+                    }
                     //Penalize the peer in the registry
-                    PeerInfo peer = registry.get(task.getAssignedPeerId());
+                    PeerInfo peer = registry.get(envelope.fromNodeId());
+                    if (peer == null && task.getAssignedPeerId() != null) {
+                        peer = registry.get(task.getAssignedPeerId());
+                    }
                     if (peer != null) {
                         peer.decrementTasks(); // Reduce load count so we can send to others
                         peer.incrementFailedTasks();
@@ -148,13 +154,7 @@ public class TaskScheduler implements Runnable {
                     .toList();
 
             for (TaskUnit<?> task : pending) {
-                // Rule: If retry count is 10, send to ALL available peers
-                if (task.getRetryCount() >= 10) {
-                    candidates.forEach(p -> assign(job, task, p));
-                    continue;
-                }
-
-                // Otherwise, find the first peer in our sorted list who still has room
+                // Find the first peer in our sorted list who still has room.
                 PeerInfo bestPeer = candidates.stream()
                         .filter(p -> p.getActiveTasks() < 3)
                         .findFirst()
