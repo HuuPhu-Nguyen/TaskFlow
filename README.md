@@ -246,8 +246,10 @@ mvn clean package
 In one terminal:
 
 ```bash
-mvn exec:java -Dexec.mainClass="server.TaskCoordinatorServer"
+mvn exec:java
 ```
+
+The coordinator main class is configured in `pom.xml`, so no additional CLI property is needed.
 
 ---
 
