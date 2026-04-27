@@ -1,14 +1,17 @@
 package server.concreteJobs.conversion;
 
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
+
 import com.google.gson.Gson;
+
 import protocol.FilePayload;
 import protocol.JobSubmitMessage;
 import protocol.TaskAssignMessage;
 import server.job.EmbarrassinglyParallelJob;
 import server.job.TaskUnit;
-
-import java.util.*;
-import java.util.concurrent.ConcurrentHashMap;
 
 /**
  * Job class for video transcoding operations.
@@ -38,7 +41,7 @@ public class VideoTranscodingJob extends EmbarrassinglyParallelJob<FilePayload, 
             FilePayload filePayload = gson.fromJson(gson.toJson(rawData), FilePayload.class);
 
             // Wrap it in task unit
-            tasks.put(taskId, new VideoTaskUnit(taskId, jobId, filePayload, targetFormat));
+            tasks.put(taskId, new ConversionTaskUnit(taskId, jobId, filePayload, targetFormat));
         }
     }
 
