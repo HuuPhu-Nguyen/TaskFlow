@@ -3,7 +3,11 @@ package gui;
 import com.google.gson.Gson;
 import javafx.application.Application;
 import javafx.application.Platform;
+import javafx.beans.property.SimpleIntegerProperty;
+import javafx.beans.property.SimpleStringProperty;
 import javafx.geometry.Insets;
+import javafx.geometry.Orientation;
+import javafx.scene.Node;
 import javafx.scene.Scene;
 import javafx.scene.control.*;
 import javafx.scene.layout.*;
@@ -17,11 +21,15 @@ import peer.engine.PeerExecutionEngine;
 import peer.processors.ImageConversionProcessor;
 import peer.processors.VideoTranscodingProcessor;
 import protocol.*;
+import server.db.DatabaseManager;
 
 import java.io.*;
 import java.net.Socket;
 import java.nio.file.*;
+import java.sql.SQLException;
 import java.time.Instant;
+import java.time.ZoneId;
+import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.Base64;
 import java.util.List;
@@ -39,6 +47,7 @@ public class PeerApp extends Application {
     private String currentOutPath;
     private String sessionId;
     private TilePane gallery;
+    private DatabaseManager historyDb;
 
     @Override
     public void init() {
@@ -93,17 +102,32 @@ public class PeerApp extends Application {
     }
 
     private void showMainGallery() {
+        TabPane tabPane = new TabPane();
+
+        Tab convertTab = new Tab("Convert");
+        convertTab.setClosable(false);
+        convertTab.setContent(buildConversionPane());
+
+        Tab historyTab = new Tab("Job History");
+        historyTab.setClosable(false);
+        historyTab.setContent(buildHistoryPane());
+
+        tabPane.getTabs().addAll(convertTab, historyTab);
+
+        window.setScene(new Scene(tabPane, 900, 650));
+        window.show();
+    }
+
+    private Node buildConversionPane() {
         BorderPane root = new BorderPane();
         root.setPadding(new Insets(10));
 
         HBox topBar = new HBox(10);
-        
-        // Job type selector
+
         ComboBox<String> jobTypeBox = new ComboBox<>();
         jobTypeBox.getItems().addAll("Image Conversion", "Video Transcoding");
         jobTypeBox.setValue("Image Conversion");
-        
-        // Format selector (changes based on job type)
+
         ComboBox<String> formatBox = new ComboBox<>();
         formatBox.getItems().addAll("PNG", "JPG", "BMP", "GIF");
         formatBox.setValue("PNG");
@@ -112,7 +136,6 @@ public class PeerApp extends Application {
         Button startBtn = new Button("Start Conversion");
         topBar.getChildren().addAll(new Label("Job Type:"), jobTypeBox, new Label("Target:"), formatBox, uploadBtn, startBtn);
 
-        // Update format options when job type changes
         jobTypeBox.setOnAction(e -> {
             String jobType = jobTypeBox.getValue();
             formatBox.getItems().clear();
@@ -135,12 +158,10 @@ public class PeerApp extends Application {
         root.setTop(topBar);
         root.setCenter(scroll);
 
-        // UPLOAD: Copy selected files to the local session 'in' folder
         startBtn.setOnAction(e -> {
             try {
                 if (socketOut == null) {
-                    new Alert(Alert.AlertType.ERROR,
-                            "Not connected to the coordinator yet.").show();
+                    new Alert(Alert.AlertType.ERROR, "Not connected to the coordinator yet.").show();
                     return;
                 }
 
@@ -171,19 +192,14 @@ public class PeerApp extends Application {
                     myActiveJobIds.add(jobId);
                     System.out.println("GUI: Job submitted via PeerNode. ID: " + jobId + " Type: " + jobType);
 
-                    // --- THE WIPE LOGIC ---
-
-                    // 1. Clear the Gallery (UI)
                     gallery.getChildren().clear();
 
-                    // 2. Clear the local 'in' folder (Filesystem)
                     for (File f : files) {
                         if (!f.delete()) {
                             System.err.println("Could not delete temporary file: " + f.getName());
                         }
                     }
 
-                    // Optional: Give the user feedback that conversion has started
                     new Alert(Alert.AlertType.CONFIRMATION, jobType + " Started! The gallery will be cleared.").show();
                 }
             } catch (Exception ex) {
@@ -195,28 +211,24 @@ public class PeerApp extends Application {
         uploadBtn.setOnAction(e -> {
             FileChooser fileChooser = new FileChooser();
             String jobType = jobTypeBox.getValue();
-            
+
             if ("Image Conversion".equals(jobType)) {
                 fileChooser.setTitle("Select Images or PDFs");
-                fileChooser.getExtensionFilters().addAll(
+                fileChooser.getExtensionFilters().add(
                     new FileChooser.ExtensionFilter("Images", "*.png", "*.jpg", "*.jpeg", "*.bmp", "*.gif", "*.pdf")
                 );
             } else {
                 fileChooser.setTitle("Select Videos");
-                fileChooser.getExtensionFilters().addAll(
+                fileChooser.getExtensionFilters().add(
                     new FileChooser.ExtensionFilter("Videos", "*.mp4", "*.avi", "*.mkv", "*.mov", "*.webm", "*.flv", "*.wmv")
                 );
             }
-            
-            List<File> selectedFiles = fileChooser.showOpenMultipleDialog(window);
 
+            List<File> selectedFiles = fileChooser.showOpenMultipleDialog(window);
             if (selectedFiles != null) {
                 for (File file : selectedFiles) {
                     try {
-                        // Copy the file to the local session folder so the Start button can find it
                         Files.copy(file.toPath(), Paths.get(currentInPath, file.getName()), StandardCopyOption.REPLACE_EXISTING);
-
-                        // Create a visual card in the gallery
                         VBox fileCard = new VBox(5);
                         fileCard.setStyle("-fx-border-color: #ccc; -fx-padding: 5; -fx-background-color: #eee;");
                         fileCard.getChildren().add(new Label(file.getName()));
@@ -228,8 +240,126 @@ public class PeerApp extends Application {
             }
         });
 
-        window.setScene(new Scene(root, 800, 600));
-        window.show();
+        return root;
+    }
+
+    private Node buildHistoryPane() {
+        // Open (or reuse) a read connection to the shared DB file
+        try {
+            if (historyDb == null) historyDb = new DatabaseManager();
+        } catch (SQLException e) {
+            Label err = new Label("Database unavailable: " + e.getMessage());
+            err.setPadding(new Insets(20));
+            return err;
+        }
+
+        DateTimeFormatter fmt = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss").withZone(ZoneId.systemDefault());
+
+        // ---- Jobs table ----
+        TableView<DatabaseManager.JobRecord> jobTable = new TableView<>();
+        jobTable.setColumnResizePolicy(TableView.CONSTRAINED_RESIZE_POLICY);
+        jobTable.setPlaceholder(new Label("No jobs recorded yet. Run the coordinator and submit a job."));
+
+        TableColumn<DatabaseManager.JobRecord, String> colType = new TableColumn<>("Type");
+        colType.setCellValueFactory(d -> new SimpleStringProperty(d.getValue().taskType()));
+
+        TableColumn<DatabaseManager.JobRecord, String> colStatus = new TableColumn<>("Status");
+        colStatus.setCellValueFactory(d -> new SimpleStringProperty(d.getValue().status()));
+
+        TableColumn<DatabaseManager.JobRecord, Number> colFiles = new TableColumn<>("Files");
+        colFiles.setCellValueFactory(d -> new SimpleIntegerProperty(d.getValue().fileCount()));
+        colFiles.setMaxWidth(60);
+
+        TableColumn<DatabaseManager.JobRecord, String> colSubmitted = new TableColumn<>("Submitted");
+        colSubmitted.setCellValueFactory(d -> new SimpleStringProperty(
+            d.getValue().submittedAt() == 0 ? "-" : fmt.format(Instant.ofEpochMilli(d.getValue().submittedAt()))
+        ));
+
+        TableColumn<DatabaseManager.JobRecord, String> colDuration = new TableColumn<>("Duration");
+        colDuration.setCellValueFactory(d -> {
+            long s = d.getValue().submittedAt();
+            long c = d.getValue().completedAt();
+            String val = (s > 0 && c > 0) ? ((c - s) / 1000.0) + " s" : "-";
+            return new SimpleStringProperty(val);
+        });
+
+        TableColumn<DatabaseManager.JobRecord, String> colJobId = new TableColumn<>("Job ID");
+        colJobId.setCellValueFactory(d -> {
+            String id = d.getValue().jobId();
+            return new SimpleStringProperty(id.length() > 12 ? id.substring(0, 12) + "…" : id);
+        });
+
+        jobTable.getColumns().addAll(colType, colStatus, colFiles, colSubmitted, colDuration, colJobId);
+
+        // ---- Tasks table ----
+        TableView<DatabaseManager.TaskRecord> taskTable = new TableView<>();
+        taskTable.setColumnResizePolicy(TableView.CONSTRAINED_RESIZE_POLICY);
+        taskTable.setPlaceholder(new Label("Select a job above to see its tasks."));
+
+        TableColumn<DatabaseManager.TaskRecord, String> tColPeer = new TableColumn<>("Peer");
+        tColPeer.setCellValueFactory(d -> new SimpleStringProperty(
+            d.getValue().assignedPeerId() != null ? d.getValue().assignedPeerId() : "-"
+        ));
+
+        TableColumn<DatabaseManager.TaskRecord, String> tColStatus = new TableColumn<>("Status");
+        tColStatus.setCellValueFactory(d -> new SimpleStringProperty(d.getValue().status()));
+
+        TableColumn<DatabaseManager.TaskRecord, String> tColDuration = new TableColumn<>("Duration");
+        tColDuration.setCellValueFactory(d -> new SimpleStringProperty(
+            d.getValue().durationMs() > 0 ? d.getValue().durationMs() + " ms" : "-"
+        ));
+
+        TableColumn<DatabaseManager.TaskRecord, Number> tColRetries = new TableColumn<>("Retries");
+        tColRetries.setCellValueFactory(d -> new SimpleIntegerProperty(d.getValue().retryCount()));
+        tColRetries.setMaxWidth(70);
+
+        TableColumn<DatabaseManager.TaskRecord, String> tColTaskId = new TableColumn<>("Task ID");
+        tColTaskId.setCellValueFactory(d -> {
+            String id = d.getValue().taskId();
+            return new SimpleStringProperty(id.length() > 12 ? id.substring(0, 12) + "…" : id);
+        });
+
+        taskTable.getColumns().addAll(tColPeer, tColStatus, tColDuration, tColRetries, tColTaskId);
+
+        // When a job row is selected, populate the task table
+        jobTable.getSelectionModel().selectedItemProperty().addListener((obs, old, sel) -> {
+            if (sel != null) {
+                taskTable.getItems().setAll(historyDb.getTasksForJob(sel.jobId()));
+            }
+        });
+
+        // ---- Layout ----
+        Button refreshBtn = new Button("Refresh");
+        refreshBtn.setOnAction(e -> {
+            jobTable.getItems().setAll(historyDb.getJobHistory());
+            taskTable.getItems().clear();
+        });
+
+        Label title = new Label("Job History");
+        title.setStyle("-fx-font-size: 14px; -fx-font-weight: bold;");
+        HBox topBar = new HBox(10, title, refreshBtn);
+        topBar.setPadding(new Insets(0, 0, 8, 0));
+
+        Label jobsLabel  = new Label("Jobs");
+        Label tasksLabel = new Label("Tasks for Selected Job");
+
+        VBox jobsSection  = new VBox(4, jobsLabel,  jobTable);
+        VBox tasksSection = new VBox(4, tasksLabel, taskTable);
+        VBox.setVgrow(jobTable,  Priority.ALWAYS);
+        VBox.setVgrow(taskTable, Priority.ALWAYS);
+
+        SplitPane split = new SplitPane(jobsSection, tasksSection);
+        split.setOrientation(Orientation.VERTICAL);
+        split.setDividerPositions(0.55);
+        VBox.setVgrow(split, Priority.ALWAYS);
+
+        VBox root = new VBox(10, topBar, split);
+        root.setPadding(new Insets(12));
+
+        // Load immediately when the pane is built
+        jobTable.getItems().setAll(historyDb.getJobHistory());
+
+        return root;
     }
 
     /**
@@ -353,6 +483,12 @@ public class PeerApp extends Application {
                 System.err.println("[GUI] Failed to save " + fp.fileName() + ": " + ex.getMessage());
             }
         }
+    }
+
+    @Override
+    public void stop() throws Exception {
+        if (historyDb != null) historyDb.close();
+        super.stop();
     }
 
     public static void main(String[] args) {

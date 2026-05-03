@@ -8,12 +8,13 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.LinkedBlockingQueue;
 
+import server.db.DatabaseManager;
 import server.handler.PeerHandler;
 import server.model.MessageEnvelope;
 import server.monitor.PeerLivenessMonitor;
 import server.registry.InMemoryPeerRegistry;
 import server.registry.PeerRegistry;
-import server.scheduler.TaskScheduler; // Import your new class
+import server.scheduler.TaskScheduler;
 
 public class TaskCoordinatorServer {
 
@@ -25,8 +26,15 @@ public class TaskCoordinatorServer {
         BlockingQueue<MessageEnvelope> inboundMailbox = new LinkedBlockingQueue<>();
         PeerRegistry registry = new InMemoryPeerRegistry();
 
-        //Initialize the TaskScheduler
-        TaskScheduler schedulerLogic = new TaskScheduler(inboundMailbox, registry);
+        DatabaseManager db = null;
+        try {
+            db = new DatabaseManager();
+            System.out.println("Database initialized: " + DatabaseManager.DB_PATH);
+        } catch (Exception e) {
+            System.err.println("Warning: could not open database, history will not be persisted: " + e.getMessage());
+        }
+
+        TaskScheduler schedulerLogic = new TaskScheduler(inboundMailbox, registry, db);
         Thread schedulerThread = new Thread(schedulerLogic, "task-scheduler");
 
         //Monitoring and Networking
@@ -66,12 +74,13 @@ public class TaskCoordinatorServer {
         schedulerThread.start();
         statusPrinter.start();
 
-        // Shutdown hook
+        final DatabaseManager finalDb = db;
         Runtime.getRuntime().addShutdownHook(new Thread(() -> {
             System.out.println("Shutting down coordinator...");
             schedulerThread.interrupt();
             monitor.shutdown();
             ioPool.shutdownNow();
+            if (finalDb != null) finalDb.close();
         }));
 
         //Server Loop

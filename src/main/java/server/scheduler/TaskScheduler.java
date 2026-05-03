@@ -1,6 +1,7 @@
 package server.scheduler;
 
 import protocol.*;
+import server.db.DatabaseManager;
 import server.job.*;
 import server.model.MessageEnvelope;
 import server.registry.*;
@@ -10,11 +11,13 @@ import java.util.concurrent.*;
 public class TaskScheduler implements Runnable {
     private final BlockingQueue<MessageEnvelope> inboundMailbox;
     private final PeerRegistry registry;
+    private final DatabaseManager db;
     private final Map<String, EmbarrassinglyParallelJob<?,?>> activeJobs = Collections.synchronizedMap(new LinkedHashMap<>());
 
-    public TaskScheduler(BlockingQueue<MessageEnvelope> mailbox, PeerRegistry registry) {
+    public TaskScheduler(BlockingQueue<MessageEnvelope> mailbox, PeerRegistry registry, DatabaseManager db) {
         this.inboundMailbox = mailbox;
         this.registry = registry;
+        this.db = db;
     }
 
     @Override
@@ -55,6 +58,10 @@ public class TaskScheduler implements Runnable {
                         //Reset the task so dispatchPendingTasks picks it up again
                         task.resetToPending();
                         task.incrementRetryCount();
+                        if (db != null) {
+                            if (task.getStatus() == TaskUnit.TaskStatus.FAILED) db.markTaskFailed(task.getTaskId());
+                            else db.markTaskRetried(task.getTaskId(), task.getRetryCount());
+                        }
                     });
         }
     }
@@ -64,14 +71,17 @@ public class TaskScheduler implements Runnable {
 
         if (msg instanceof JobSubmitMessage submit) {
             try {
-                //Create the job using the factory
-                // We pass the requester ID from the envelope so we know where to send results
                 EmbarrassinglyParallelJob<?,?> job = JobFactory.create(submit, envelope.fromNodeId());
-                //Populate the job with individual TaskUnits from the payloads
                 job.initializeTasks(submit);
-                //Register the job in the activeJobs map for the dispatcher to see
                 activeJobs.put(job.getJobId(), job);
                 System.out.println("[Scheduler] Started " + job.getTaskType() + " Job: " + job.getJobId());
+
+                if (db != null) {
+                    db.insertJob(job.getJobId(), job.getTaskType(), job.getRequesterNodeId(), job.getTasks().size());
+                    for (String taskId : job.getTasks().keySet()) {
+                        db.insertTask(taskId, job.getJobId());
+                    }
+                }
             } catch (Exception e) {
                 System.err.println("[Scheduler] Failed to create job: " + e.getMessage());
             }
@@ -98,15 +108,21 @@ public class TaskScheduler implements Runnable {
                     //Reset the task so dispatchPendingTasks picks it up again
                     task.resetToPending();
                     task.incrementRetryCount();
+                    if (db != null) {
+                        if (task.getStatus() == TaskUnit.TaskStatus.FAILED) db.markTaskFailed(task.getTaskId());
+                        else db.markTaskRetried(task.getTaskId(), task.getRetryCount());
+                    }
                     return;
                 }
                 if (task != null && task.getStartTime() > 0) {
-                    long duration = System.currentTimeMillis() - task.getStartTime();
+                    long now = System.currentTimeMillis();
+                    long duration = now - task.getStartTime();
                     PeerInfo peer = registry.get(envelope.fromNodeId());
                     if (peer != null) {
                         peer.updateTaskMetrics(duration);
                         peer.decrementTasks();
                     }
+                    if (db != null) db.markTaskCompleted(task.getTaskId(), now, duration);
                 }
                 if (job.recordResult(result.getTaskId(), result.getResultPayload())) {
                     if (job.isJobComplete()) {
@@ -135,6 +151,7 @@ public class TaskScheduler implements Runnable {
 
                         // 4. Cleanup
                         activeJobs.remove(job.getJobId());
+                        if (db != null) db.markJobCompleted(job.getJobId());
                     }
                 }
             }
@@ -171,10 +188,11 @@ public class TaskScheduler implements Runnable {
 
     private void assign(EmbarrassinglyParallelJob<?,?> job, TaskUnit<?> task, PeerInfo peer) {
         task.markAssigned(peer.getNodeId());
-        task.setStartTime(System.currentTimeMillis()); // 1. Record departure time
+        task.setStartTime(System.currentTimeMillis());
         peer.incrementTasks();
         TaskAssignMessage message = job.createTaskAssignMessage(task);
         peer.send(message);
+        if (db != null) db.markTaskAssigned(task.getTaskId(), peer.getNodeId(), task.getStartTime());
     }
 
     private List<PeerInfo> getAvailablePeers() {
